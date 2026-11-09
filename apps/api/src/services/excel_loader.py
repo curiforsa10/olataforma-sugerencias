@@ -9,6 +9,7 @@ import csv
 import io
 import threading
 import unicodedata
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 from openpyxl import load_workbook
@@ -283,6 +284,36 @@ def _rows_from_csv(content: bytes) -> tuple[list[str], list[list[Any]]]:
     return all_rows[0], all_rows[1:]
 
 
+def _iter_filas_csv(content: bytes) -> tuple[list[str], Iterator[list[str]]]:
+    """Como `_rows_from_csv`, pero entrega las filas de a una en vez de la lista
+    entera. Mismo decode y mismo dialecto, sin copiar el archivo a un texto
+    entero (con el CSV del motor eran ~30 MB vivos durante toda la lectura)."""
+    primera_linea = content.split(b"\n", 1)[0].decode("utf-8-sig", errors="replace")
+    delim = ";" if primera_linea.count(";") > primera_linea.count(",") else ","
+    texto = io.TextIOWrapper(io.BytesIO(content), encoding="utf-8-sig", errors="replace", newline="")
+    reader = csv.reader(texto, delimiter=delim, quotechar='"', doublequote=True)
+    return next(reader, []), reader
+
+
+def _iter_filas_xlsx(content: bytes) -> tuple[list[str], Iterator[tuple]]:
+    """Como `_rows_from_xlsx`, pero entrega las filas de a una."""
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    rows = wb.active.iter_rows(values_only=True)
+    primera = next(rows, None)
+    if primera is None:
+        wb.close()
+        return [], iter(())
+    headers = [str(h) if h is not None else "" for h in primera]
+
+    def _resto() -> Iterator[tuple]:
+        try:
+            yield from rows
+        finally:
+            wb.close()
+
+    return headers, _resto()
+
+
 # --- Carga principal ------------------------------------------------------------
 
 def procesar_registros(
@@ -317,6 +348,53 @@ def procesar_registros(
             if h in reg:
                 valores[field] = _cast(field, reg[h])
         filas.append(valores)
+    return filas, detectadas, ignoradas
+
+
+def procesar_filas(
+    headers: list[str], rows: Iterable[list[Any] | tuple],
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """Lo mismo que `procesar_registros(dict(zip(headers, fila)) for cada fila)`,
+    sin armar el dict crudo de cada fila ni guardar las filas leidas.
+
+    Con el CSV del motor (18 mil filas x ~95 columnas) la lista de filas crudas y
+    la de dicts por cabecera convivian en memoria con las filas ya mapeadas: la
+    carga llegaba a ~215 MB solo en Python y, sumada a la API en reposo y a alguien
+    mirando el sugerido, pasaba los 512 MB de Render (9 caidas por memoria entre
+    el 02 y el 09-11-2026). Aca se castea cada fila al leerla y se descarta.
+
+    Respeta lo que hacia `dict(zip(...))`: con cabeceras repetidas gana la ultima
+    columna presente, una fila mas corta no trae las columnas que le faltan, y una
+    cabecera solo se reporta (detectada o ignorada) si alguna fila la alcanzo.
+    """
+    indices: dict[str, list[int]] = {}
+    for i, h in enumerate(headers):
+        indices.setdefault(h, []).append(i)
+    mapeo = [(h, field, idx) for h, idx in indices.items()
+             if (field := HEADER_ALIASES.get(_norm(h)))]
+
+    filas: list[dict[str, Any]] = []
+    largo_max = 0
+    for raw in rows:
+        n = len(raw)
+        largo_max = max(largo_max, n)
+        valores: dict[str, Any] = {}
+        for _h, field, idx in mapeo:
+            presentes = [i for i in idx if i < n]
+            if presentes:
+                valores[field] = _cast(field, raw[presentes[-1]])
+        filas.append(valores)
+
+    detectadas: list[str] = []
+    ignoradas: list[str] = []
+    for h, idx in indices.items():
+        if idx[0] >= largo_max:
+            continue
+        field = HEADER_ALIASES.get(_norm(h))
+        if field:
+            detectadas.append(f"{h} -> {field}")
+        elif h:
+            ignoradas.append(h)
     return filas, detectadas, ignoradas
 
 
@@ -391,7 +469,10 @@ def _persistir_filas(
         if not valores.get("producto") or not valores.get("sucursal_id"):
             saltadas += 1
             continue
-        registros_sugerido.append({**valores, "tenant_id": tenant})
+        # En la misma fila y no en una copia: con 18 mil filas eran otras 18 mil
+        # dicts vivas hasta el final de la carga.
+        valores["tenant_id"] = tenant
+        registros_sugerido.append(valores)
 
         p = valores["producto"]
         if p not in productos_vistos:
@@ -506,14 +587,13 @@ def cargar_sugerido(db: Session, filename: str, content: bytes) -> dict:
     """Parsea el archivo Excel/CSV y reemplaza el contenido de la tabla `sugerido`."""
     name = (filename or "").lower()
     if name.endswith(".csv"):
-        headers, data = _rows_from_csv(content)
+        headers, rows = _iter_filas_csv(content)
     elif name.endswith((".xlsx", ".xlsm")):
-        headers, data = _rows_from_xlsx(content)
+        headers, rows = _iter_filas_xlsx(content)
     else:
         raise ValueError("Formato no soportado. Usa .xlsx o .csv")
 
-    registros = [dict(zip(headers, raw)) for raw in data]
-    filas, detectadas, ignoradas = procesar_registros(registros)
+    filas, detectadas, ignoradas = procesar_filas(headers, rows)
 
     from . import snapshot_service
 
