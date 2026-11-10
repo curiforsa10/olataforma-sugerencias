@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from .config import get_settings
 from .db import create_all
@@ -39,6 +40,7 @@ from .routers import (
     ventas_historicas,
     canal_digital,
 )
+from .services import memoria
 from .services.auth import (
     requiere_admin,
     requiere_auth,
@@ -47,6 +49,10 @@ from .services.auth import (
 )
 
 settings = get_settings()
+
+# Antes de que FastAPI arranque su pool de hilos: cada hilo nuevo tomaria su propia
+# arena de memoria (ver `services/memoria.py`).
+memoria.limitar_arenas()
 
 
 @asynccontextmanager
@@ -88,6 +94,17 @@ app.add_middleware(
     # contador de filas quedaba siempre en cero.
     expose_headers=["Content-Disposition", "X-Filas"],
 )
+
+
+@app.middleware("http")
+async def liberar_memoria_tras_paso_pesado(request: Request, call_next):
+    """Despues de cada POST pesado (los de la publicacion del motor), devuelve al
+    sistema la memoria que quedo libre. En un hilo aparte: la recoleccion tarda
+    unas decimas y no tiene por que frenar al resto de la API."""
+    response = await call_next(request)
+    if memoria.es_paso_pesado(request.method, request.url.path):
+        await run_in_threadpool(memoria.liberar)
+    return response
 
 
 @app.exception_handler(Exception)
