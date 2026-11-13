@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { COLUMNAS, conMesReal, etiquetaMes } from "@/lib/columnas";
+import { COLUMNAS, conMesReal, etiquetaMes, mesesEnOrdenCalendario } from "@/lib/columnas";
 
 describe("etiquetaMes", () => {
   it("cuenta hacia atrás desde el último mes cerrado, cruzando el año", () => {
@@ -61,5 +61,29 @@ describe("catálogo de columnas", () => {
       Array.from({ length: 12 }, (_, i) => `venta_mes_${String(i + 1).padStart(2, "0")}`)
         .some(visible)
     ).toBe(false);
+  });
+
+  it("los meses van del más antiguo al más reciente, de izquierda a derecha", () => {
+    const meses = COLUMNAS.map((c) => c.key as string).filter((k) => k.startsWith("venta_mes_"));
+    expect(meses[0]).toBe("venta_mes_12");
+    expect(meses[11]).toBe("venta_mes_01");
+    expect(meses.map((k) => conMesReal(COLUMNAS.find((c) => c.key === k)!, "202610").label))
+      .toEqual(["Venta nov-25", "Venta dic-25", "Venta ene-26", "Venta feb-26", "Venta mar-26",
+        "Venta abr-26", "Venta may-26", "Venta jun-26", "Venta jul-26", "Venta ago-26",
+        "Venta sep-26", "Venta oct-26"]);
+  });
+});
+
+describe("mesesEnOrdenCalendario", () => {
+  it("reordena los meses de un orden guardado sin mover las demás columnas", () => {
+    const guardado = ["producto", "venta_mes_01", "venta_mes_02", "abc", "venta_mes_03"]
+      .map((colId) => ({ colId, hide: false }));
+    expect(mesesEnOrdenCalendario(guardado).map((c) => c.colId))
+      .toEqual(["producto", "venta_mes_03", "venta_mes_02", "abc", "venta_mes_01"]);
+  });
+
+  it("deja igual un orden sin meses", () => {
+    const guardado = [{ colId: "producto" }, { colId: "abc" }];
+    expect(mesesEnOrdenCalendario(guardado)).toEqual(guardado);
   });
 });

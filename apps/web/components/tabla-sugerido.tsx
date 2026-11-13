@@ -17,7 +17,7 @@ import type {
   ValueGetterParams,
 } from "ag-grid-community";
 import { Check, Copy, Info } from "lucide-react";
-import { COLUMNAS, conMesReal, type DefColumna } from "@/lib/columnas";
+import { COLUMNAS, conMesReal, mesesEnOrdenCalendario, type DefColumna } from "@/lib/columnas";
 import { formatoCLP, formatoNumero } from "@/lib/formato";
 import { STORAGE_KEYS, guardar, leer } from "@/lib/persistencia-dashboard";
 import type { ColumnaFiltro, SugeridoFiltros, SugeridoKpis, SugeridoRow } from "@/lib/types";
@@ -527,7 +527,7 @@ export const TablaSugerido = forwardRef<TablaSugeridoHandle, Props>(function Tab
         // arranquen uniformes (flex=1 del defaultColDef). Preservamos orden,
         // sort, pinned y visibilidad. Si el usuario redimensiona despues, ese
         // nuevo width queda persistido en el proximo onColumnResized.
-        const limpio = cols.map((c) => ({
+        const limpio = mesesEnOrdenCalendario(cols).map((c) => ({
           ...c,
           width: undefined,
           flex: null,
