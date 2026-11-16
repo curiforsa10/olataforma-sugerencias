@@ -2269,6 +2269,9 @@ def grupo_ventas(db: Session, producto: str, sucursal: str | None = None, filtro
     crudas = variantes_de_sucursal(db, miembros, clave) if clave else None
 
     stock = {}
+    # El mismo stock, abierto por sucursal (varias bodegas de una sucursal se suman):
+    # la ficha muestra una columna por sucursal en vez de solo el total (13-11-2026).
+    stock_suc: dict[str, dict[str, float]] = {}
     for m in miembros:
         filas_stock = stock_service.stock_por_sucursal(db, m)
         if filtro_stock is not None:
@@ -2276,6 +2279,11 @@ def grupo_ventas(db: Session, producto: str, sucursal: str | None = None, filtro
         if clave:
             filas_stock = [r for r in filas_stock if clave_sucursal(r.get("sucursal_id")) == clave]
         stock[m] = sum(r["stock"] for r in filas_stock)
+        por_suc: dict[str, float] = {}
+        for r in filas_stock:
+            suc = r.get("sucursal_id") or "SIN SUCURSAL"
+            por_suc[suc] = por_suc.get(suc, 0.0) + r["stock"]
+        stock_suc[m] = por_suc
 
     meses: dict[str, dict[str, float]] = {}
     salida = []
@@ -2315,6 +2323,7 @@ def grupo_ventas(db: Session, producto: str, sucursal: str | None = None, filtro
             "ultimo_mes_con_venta": next(
                 (p for p, c in reversed(serie) if c > 0), None),
             "stock": stock.get(m, 0),
+            "stock_por_sucursal": stock_suc.get(m, {}),
             "cuenta_en_el_total": cuenta,
             # Por que no cuenta, para que la pantalla lo pueda decir.
             "motivo_fuera": None if cuenta else (
@@ -2340,4 +2349,15 @@ def grupo_ventas(db: Session, producto: str, sucursal: str | None = None, filtro
         ],
         "total_venta_12m": sum(m["venta_12m"] for m in salida if m["cuenta_en_el_total"]),
         "total_stock": sum(m["stock"] for m in salida if m["cuenta_en_el_total"]),
+        # Con la misma regla que `total_stock`: solo los codigos que el motor junto.
+        "total_stock_por_sucursal": _sumar_por_sucursal(
+            m["stock_por_sucursal"] for m in salida if m["cuenta_en_el_total"]),
     }
+
+
+def _sumar_por_sucursal(partes) -> dict[str, float]:
+    total: dict[str, float] = {}
+    for parte in partes:
+        for suc, cant in parte.items():
+            total[suc] = total.get(suc, 0.0) + cant
+    return total

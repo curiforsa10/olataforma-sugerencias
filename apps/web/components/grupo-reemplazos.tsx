@@ -31,6 +31,34 @@ function etiquetaMes(yyyymm: string): string {
 const COLORES = ["#1e40af", "#94a3b8", "#cbd5e1", "#e2e8f0", "#f1f5f9"];
 
 /**
+ * Las sucursales que tienen stock de algun codigo del grupo, la de mas stock primero.
+ *
+ * Una columna por sucursal en vez de solo el total (Abastecimiento, 13-11-2026), pero
+ * solo las que tienen algo: con las ~14 sucursales siempre, la tabla seria casi toda
+ * ceros. Vacio cuando la vista ya es de una sola sucursal (el vendedor) o la API es
+ * anterior y no trae el desglose: ahi queda la columna de stock de siempre.
+ */
+export function sucursalesConStock(data: GrupoVentas): string[] {
+  if (data.sucursal) return [];
+  const total: Record<string, number> = {};
+  for (const m of data.miembros) {
+    for (const [s, c] of Object.entries(m.stock_por_sucursal ?? {})) {
+      if (c > 0) total[s] = (total[s] ?? 0) + c;
+    }
+  }
+  return Object.keys(total).sort((a, b) => total[b] - total[a] || a.localeCompare(b));
+}
+
+function CeldaStock({ valor }: { valor: number }) {
+  // El cero en gris claro: lo que importa es donde SI hay.
+  return (
+    <td className={`px-3 py-2 text-right tabular-nums ${valor ? "" : "text-slate-300"}`}>
+      {valor ? formatoNumero(valor) : "—"}
+    </td>
+  );
+}
+
+/**
  * El historial del repuesto: que codigo reemplazo a cual, y cuanto vendio cada uno.
  *
  * Sin esto el comprador ve un numero consolidado y no sabe de donde viene. Un
@@ -88,6 +116,7 @@ export function GrupoReemplazos({
   const fuera = data.miembros.filter((m) => !m.cuenta_en_el_total);
   // Solo la vista del vendedor trae el transito por codigo: en las demas la columna no existe.
   const conTransito = data.miembros.some((m) => m.transito !== undefined);
+  const sucursales = sucursalesConStock(data);
 
   return (
     <Card>
@@ -111,7 +140,14 @@ export function GrupoReemplazos({
                 <th className="px-3 py-2 text-right">Venta 12m</th>
                 <th className="px-3 py-2 text-right">Venta total</th>
                 <th className="px-3 py-2">Última venta</th>
-                <th className="px-3 py-2 text-right">Stock</th>
+                {sucursales.map((s) => (
+                  <th key={s} className="whitespace-nowrap px-3 py-2 text-right">
+                    {s}
+                  </th>
+                ))}
+                <th className="px-3 py-2 text-right">
+                  {sucursales.length > 0 ? "Stock total" : "Stock"}
+                </th>
                 {conTransito && <th className="px-3 py-2 text-right">En tránsito</th>}
               </tr>
             </thead>
@@ -152,6 +188,9 @@ export function GrupoReemplazos({
                   <td className="px-3 py-2 text-slate-500">
                     {m.ultimo_mes_con_venta ? etiquetaMes(m.ultimo_mes_con_venta) : "—"}
                   </td>
+                  {sucursales.map((s) => (
+                    <CeldaStock key={s} valor={m.stock_por_sucursal?.[s] ?? 0} />
+                  ))}
                   <td className="px-3 py-2 text-right tabular-nums">
                     {formatoNumero(m.stock)}
                   </td>
@@ -177,6 +216,9 @@ export function GrupoReemplazos({
                 </td>
                 <td className="px-3 py-2" />
                 <td className="px-3 py-2" />
+                {sucursales.map((s) => (
+                  <CeldaStock key={s} valor={data.total_stock_por_sucursal?.[s] ?? 0} />
+                ))}
                 <td className="px-3 py-2 text-right tabular-nums">
                   {formatoNumero(data.total_stock ?? 0)}
                 </td>

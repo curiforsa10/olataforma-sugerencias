@@ -459,6 +459,8 @@ export interface MiembroGrupo {
   /** Último período con venta ("202506"), para ver cuándo se apagó. */
   ultimo_mes_con_venta: string | null;
   stock: number;
+  /** El mismo stock por sucursal ({ "LINDEROS": 12, ... }). Una API anterior no lo trae. */
+  stock_por_sucursal?: Record<string, number>;
   /** Unidades en transito de este codigo (solo la vista del vendedor lo trae). */
   transito?: number;
   /** false cuando FORD lo declara reemplazo pero el motor no los agrupó. */
@@ -477,6 +479,8 @@ export interface GrupoVentas {
   meses: Array<Record<string, string | number>>;
   total_venta_12m?: number;
   total_stock?: number;
+  /** El total por sucursal, con la misma regla que `total_stock`. */
+  total_stock_por_sucursal?: Record<string, number>;
 }
 
 export interface CatalogoDetalle extends CatalogoRow {

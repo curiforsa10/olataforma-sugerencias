@@ -87,6 +87,31 @@ def test_el_total_suma_los_dos_codigos(grupo):
     assert r["total_stock"] == 119       # 9 + 110
 
 
+def test_el_stock_viene_abierto_por_sucursal(grupo):
+    """La ficha muestra una columna por sucursal con stock (13-11-2026). Dos bodegas
+    de la misma sucursal se suman; el total por sucursal usa la regla del total."""
+    grupo.add(StockUnificado(tenant_id="curifor", producto="19 MB3Z19N619A",
+                             bodega="OTRA", sucursal_id="CHILLAN", stock=1))
+    grupo.commit()
+    r = sugerido_service.grupo_ventas(grupo, "25 MB3Z19N619C")
+    por_codigo = {m["producto"]: m for m in r["miembros"]}
+
+    assert por_codigo["19 MB3Z19N619A"]["stock_por_sucursal"] == {"CHILLAN": 10}
+    assert por_codigo["25 MB3Z19N619C"]["stock_por_sucursal"] == {"RANCAGUA": 110}
+    assert r["total_stock_por_sucursal"] == {"CHILLAN": 10, "RANCAGUA": 110}
+    assert sum(r["total_stock_por_sucursal"].values()) == r["total_stock"]
+
+
+def test_el_stock_por_sucursal_de_un_codigo_fuera_no_suma(grupo):
+    r = grupo.query(ReemplazoFord).filter_by(producto="25 MB3Z19N619C").first()
+    r.agrupado = False
+    grupo.commit()
+
+    out = sugerido_service.grupo_ventas(grupo, "25 MB3Z19N619C")
+
+    assert out["total_stock_por_sucursal"] == {"CHILLAN": 9}
+
+
 def test_se_ve_cuando_se_apago_cada_codigo(grupo):
     """Para eso esta el desglose: ver el mes del traspaso."""
     r = sugerido_service.grupo_ventas(grupo, "25 MB3Z19N619C")
