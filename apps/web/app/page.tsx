@@ -13,7 +13,7 @@ import { ModalSugerenciaManual } from "@/components/modal-sugerencia-manual";
 import { api } from "@/lib/api-client";
 import { SincronizacionManual } from "@/components/sincronizacion-manual";
 import { getEsAdmin, getEsVendedor, getPuedeActualizar, getSoloLectura } from "@/lib/auth";
-import { columnasPorDefectoVista } from "@/lib/columnas";
+import { clavesConMesesEnOrdenCalendario, columnasPorDefectoVista } from "@/lib/columnas";
 import { formatoFechaHora, formatoNumero } from "@/lib/formato";
 import { STORAGE_KEYS, guardar, leer } from "@/lib/persistencia-dashboard";
 import type { ColumnaFiltro, Sucursal, SugeridoFiltros, SugeridoKpis, SugeridoRow } from "@/lib/types";
@@ -295,7 +295,8 @@ export default function DashboardPage() {
       const orden = tablaRef.current?.obtenerOrden() ?? "-total_sugerido_suc";
       await api.exportExcel(
         { ...filtros, filtros_columna: filtrosColumna },
-        colsVisibles,
+        // Los meses de venta del más antiguo al más reciente, como en la pantalla.
+        clavesConMesesEnOrdenCalendario(colsVisibles),
         orden
       );
     } catch (e) {

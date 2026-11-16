@@ -284,6 +284,15 @@ export function mesesEnOrdenCalendario<T extends { colId: string }>(estado: T[])
   return estado.map((c) => (esMes(c) ? meses[i++] : c));
 }
 
+/**
+ * Lo mismo sobre una lista de claves de columna. La usa el Excel: sus columnas
+ * salen en el orden en que la persona las fue prendiendo, así que los meses
+ * podían quedar del más reciente al más antiguo aunque la pantalla ya no.
+ */
+export function clavesConMesesEnOrdenCalendario(claves: string[]): string[] {
+  return mesesEnOrdenCalendario(claves.map((colId) => ({ colId }))).map((c) => c.colId);
+}
+
 /** La misma definición, con el mes de verdad en el título cuando se puede saber. */
 export function conMesReal(
   def: DefColumna,

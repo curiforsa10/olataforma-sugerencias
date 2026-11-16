@@ -9,7 +9,13 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { COLUMNAS, conMesReal, etiquetaMes, mesesEnOrdenCalendario } from "@/lib/columnas";
+import {
+  COLUMNAS,
+  clavesConMesesEnOrdenCalendario,
+  conMesReal,
+  etiquetaMes,
+  mesesEnOrdenCalendario,
+} from "@/lib/columnas";
 
 describe("etiquetaMes", () => {
   it("cuenta hacia atrás desde el último mes cerrado, cruzando el año", () => {
@@ -80,6 +86,13 @@ describe("mesesEnOrdenCalendario", () => {
       .map((colId) => ({ colId, hide: false }));
     expect(mesesEnOrdenCalendario(guardado).map((c) => c.colId))
       .toEqual(["producto", "venta_mes_03", "venta_mes_02", "abc", "venta_mes_01"]);
+  });
+
+  it("las columnas del Excel salen con los meses en orden de calendario", () => {
+    // El Excel recibe las claves en el orden en que se prendieron.
+    expect(clavesConMesesEnOrdenCalendario(
+      ["producto", "venta_mes_01", "venta_mes_02", "venta_mes_12", "total_sugerido_suc"]
+    )).toEqual(["producto", "venta_mes_12", "venta_mes_02", "venta_mes_01", "total_sugerido_suc"]);
   });
 
   it("deja igual un orden sin meses", () => {
