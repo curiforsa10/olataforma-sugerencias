@@ -1,14 +1,79 @@
 """Consulta del catálogo maestro de productos (tabla producto_catalogo)."""
 from __future__ import annotations
 
-from sqlalchemy import distinct, func, or_, select
+from sqlalchemy import distinct, func, insert, or_, select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..models import ProductoCatalogo, Sugerido
+from ..models import PrecioProducto, ProductoCatalogo, StockUnificado, Sugerido
 from . import reemplazo_service, stock_service
 
 settings = get_settings()
+
+# Tope de codigos por IN (...): lejos del limite de parametros de cualquier driver.
+_LOTE_IN = 900
+
+
+def agregar_desde_stock(db: Session) -> dict:
+    """Agrega al catalogo los codigos con stock que todavia no estan.
+
+    El catalogo se cargo UNA vez desde un export del ERP (`jobs/cargar_catalogo.py`,
+    31-05-2026) y nunca mas: al 20-11-2026 le faltaban ~4% de los codigos con
+    stock (unos 600 a 900), sobre todo codigos nuevos de Curifor y los de Frontera.
+    No se podian buscar, no tenian ficha y el vendedor no los veia en "Productos".
+
+    Se llama cada vez que el motor publica el stock. Solo AGREGA: no toca ni borra
+    las filas que ya estan. Ficha minima: la descripcion sale de la lista de precios
+    o del sugerido (si alguno la tiene) y el stock total, de la foto recien
+    publicada. Familia, procedencia y el resto quedan vacios hasta una recarga
+    completa del catalogo.
+    """
+    tenant = settings.default_tenant_id
+    con_stock = list(db.scalars(
+        select(StockUnificado.producto)
+        .where(StockUnificado.tenant_id == tenant, StockUnificado.stock > 0)
+        .distinct()
+    ).all())
+    faltan: list[str] = []
+    for i in range(0, len(con_stock), _LOTE_IN):
+        lote = con_stock[i:i + _LOTE_IN]
+        ya = set(db.scalars(
+            select(ProductoCatalogo.producto)
+            .where(ProductoCatalogo.tenant_id == tenant, ProductoCatalogo.producto.in_(lote))
+        ).all())
+        faltan += [p for p in lote if p not in ya]
+    if not faltan:
+        return {"agregados": 0}
+
+    glosa: dict[str, str] = {}
+    stock: dict[str, float] = {}
+    for i in range(0, len(faltan), _LOTE_IN):
+        lote = faltan[i:i + _LOTE_IN]
+        # El sugerido primero y la lista de precios despues: si los dos la tienen,
+        # gana la de la lista de precios, que viene del ERP.
+        for p, d in db.execute(
+            select(Sugerido.producto, func.max(Sugerido.descripcion))
+            .where(Sugerido.tenant_id == tenant, Sugerido.producto.in_(lote))
+            .group_by(Sugerido.producto)
+        ).all():
+            if d:
+                glosa[p] = d
+        for p, d in db.execute(
+            select(PrecioProducto.producto, PrecioProducto.glosa)
+            .where(PrecioProducto.tenant_id == tenant, PrecioProducto.producto.in_(lote))
+        ).all():
+            if d:
+                glosa[p] = d
+        stock.update(stock_service.stock_total_por_producto(db, lote))
+
+    filas = [
+        {"tenant_id": tenant, "producto": p, "glosa": glosa.get(p), "stock_total": stock.get(p)}
+        for p in sorted(faltan)
+    ]
+    for i in range(0, len(filas), 1000):
+        db.execute(insert(ProductoCatalogo), filas[i:i + 1000])
+    db.commit()
+    return {"agregados": len(filas), "con_descripcion": sum(1 for f in filas if f["glosa"])}
 
 SORTABLE = {c.name for c in ProductoCatalogo.__table__.columns}
 

@@ -153,7 +153,10 @@ def test_stock_publicar_y_verlo_en_el_catalogo(client, db_session):
         {"producto": "", "bodega": "X", "stock": 99},  # sin codigo -> se ignora
     ]})
     assert r.status_code == 200
-    assert r.json() == {"filas_cargadas": 3, "ignoradas": 1, "reemplazo": True}
+    # `catalogo` dice cuantos codigos con stock se agregaron al catalogo (ver
+    # test_catalogo_altas.py): este ya estaba catalogado.
+    assert r.json() == {"filas_cargadas": 3, "ignoradas": 1, "reemplazo": True,
+                        "catalogo": {"agregados": 0}}
 
     d = client.get("/api/catalogo/20 BXO5W30AA").json()
     assert d["stock_total"] == 47

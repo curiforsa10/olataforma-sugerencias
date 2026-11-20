@@ -12,6 +12,7 @@ from ..db import get_db
 from ..services import (
     recurrentes_service,
     auditoria_service,
+    catalogo_service,
     config_modelo_service,
     excel_loader,
     lead_time_service,
@@ -116,6 +117,21 @@ def publicar_stock_unificado(
             detalle=f"Stock unificado: {resumen['filas_cargadas']} filas",
         )
         db.commit()
+        # Los codigos con stock que el catalogo no tenia (ver `agregar_desde_stock`).
+        # Un fallo aca no puede tumbar la publicacion del stock, que ya quedo guardada.
+        try:
+            resumen["catalogo"] = catalogo_service.agregar_desde_stock(db)
+            if resumen["catalogo"]["agregados"]:
+                auditoria_service.registrar(
+                    db,
+                    accion="catalogo_altas",
+                    entidad="sistema",
+                    detalle=f"Catalogo: {resumen['catalogo']['agregados']} codigos con stock agregados",
+                )
+                db.commit()
+        except Exception as e:  # noqa: BLE001
+            db.rollback()
+            resumen["catalogo"] = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
     return resumen
 
 
