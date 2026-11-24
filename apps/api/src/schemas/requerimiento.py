@@ -33,6 +33,14 @@ class FrecuenciaOtraSucursal(BaseModel):
     clasificacion_abc: str | None = None
 
 
+class SucursalStockRecepcion(BaseModel):
+    sucursal_id: str
+    stock: float = 0
+    # Ultima recepcion de los ultimos 12 meses en esa sucursal ("YYYY-MM-DD").
+    # "DESCONOCIDO" son importaciones que no dicen a que sucursal llegaron.
+    ult_recepcion: str | None = None
+
+
 class LineaRequerimiento(BaseModel):
     """Una linea con todo lo necesario para decidir comprarla o no."""
 
@@ -65,6 +73,11 @@ class LineaRequerimiento(BaseModel):
     transito_sucursal: float | None = None
     transito_nacional: float | None = None
     transito_pedido_desde: str | None = None
+    # Ultima recepcion de los ultimos 12 meses ("YYYY-MM-DD") en toda la empresa.
+    # `None` = no llego en 12 meses (o el motor no la publico).
+    ult_recepcion_empresa: str | None = None
+    # Stock y ultima recepcion por sucursal (se despliega desde "Nacional").
+    por_sucursal: list[SucursalStockRecepcion] = []
 
 
 class ResumenRequerimiento(BaseModel):

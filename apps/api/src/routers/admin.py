@@ -24,6 +24,7 @@ from ..services import (
     powerbi_loader,
     precios_service,
     proveedor_producto_service,
+    recepcion_service,
     reemplazo_service,
     snapshot_service,
     stock_service,
@@ -159,6 +160,34 @@ def publicar_stock_transito(
             accion="transito_publicado",
             entidad="sistema",
             detalle=f"Stock en transito: {resumen['filas_cargadas']} filas",
+        )
+        db.commit()
+    return resumen
+
+
+@router.post("/recepciones")
+def publicar_recepciones(
+    payload: dict,
+    db: Session = Depends(get_db),
+) -> dict:
+    """El motor publica la ultima recepcion de cada producto en cada sucursal
+    (ultimos 12 meses; reemplaza la foto).
+
+    payload: {"filas": [{producto, sucursal_id, fecha}]}
+
+    La muestra el requerimiento de sucursal: si el repuesto llego hace poco aca o en
+    otra sucursal (Abastecimiento, 24-11-2026).
+    """
+    filas = payload.get("filas")
+    if not isinstance(filas, list):
+        raise HTTPException(status_code=400, detail="Falta la lista 'filas'")
+    resumen = recepcion_service.reemplazar(db, filas)
+    if resumen["reemplazo"]:
+        auditoria_service.registrar(
+            db,
+            accion="recepciones_publicadas",
+            entidad="sistema",
+            detalle=f"Ultima recepcion: {resumen['filas_cargadas']} filas",
         )
         db.commit()
     return resumen

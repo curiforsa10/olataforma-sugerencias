@@ -43,7 +43,13 @@ from ..models import (
     Sugerido,
     VentaHistorica,
 )
-from . import reemplazo_service, stock_service, sugerido_service, transito_service
+from . import (
+    recepcion_service,
+    reemplazo_service,
+    stock_service,
+    sugerido_service,
+    transito_service,
+)
 
 settings = get_settings()
 
@@ -207,6 +213,47 @@ def _stock_nacional(db: Session, productos: set[str]) -> dict[str, float]:
         return {}
 
 
+def _por_sucursal(db: Session, productos: set[str]) -> dict[str, list[dict]]:
+    """Stock y ultima recepcion (12 meses) de cada producto, sucursal por sucursal.
+
+    Abastecimiento (24-11-2026): desde la columna "Nacional" del requerimiento,
+    ver donde esta el stock y cuando llego por ultima vez a cada sucursal. El stock
+    es el mismo que suma "Nacional" (todas las bodegas, sumadas por sucursal), para
+    que el desglose cuadre con el total. Aparece toda sucursal con stock o con una
+    recepcion en 12 meses; las importaciones que no dicen sucursal van aparte.
+    """
+    if not productos:
+        return {}
+    stock: dict[str, dict[str | None, float]] = {}
+    try:
+        for p, s, c in db.execute(
+            select(StockUnificado.producto, StockUnificado.sucursal_id,
+                   func.sum(StockUnificado.stock))
+            .where(StockUnificado.producto.in_(productos))
+            .group_by(StockUnificado.producto, StockUnificado.sucursal_id)
+        ).all():
+            stock.setdefault(p, {})[s] = float(c or 0)
+    except Exception:  # noqa: BLE001 - tabla ausente en un deploy nuevo
+        db.rollback()
+    recep = recepcion_service.por_producto_y_sucursal(db, productos)
+
+    salida: dict[str, list[dict]] = {}
+    for p in productos:
+        st, rc = stock.get(p, {}), recep.get(p, {})
+        filas = []
+        for s in set(st) | set(rc):
+            cant = st.get(s, 0.0)
+            if cant == 0 and s not in rc:
+                continue
+            filas.append({"sucursal_id": s or "SIN SUCURSAL", "stock": cant,
+                          "ult_recepcion": _iso(rc.get(s))})
+        # Mas stock primero; a igual stock, la que recibio mas reciente.
+        filas.sort(key=lambda f: (-f["stock"], -(int((f["ult_recepcion"] or "0").replace("-", ""))),
+                                  f["sucursal_id"]))
+        salida[p] = filas
+    return salida
+
+
 def _venta_12m(db: Session, productos: set[str], sucursal_id: str) -> dict[str, float]:
     """Unidades vendidas de verdad en los ultimos 12 meses, en ESA sucursal.
 
@@ -299,6 +346,10 @@ def analizar(db: Session, sucursal_id: str, lineas: list[dict]) -> dict:
     # de respaldo por si el motor todavia no publico la tabla nueva.
     transito = transito_service.por_producto(db, set(productos), sucursal_id)
     transito_nac = transito_service.por_producto(db, set(productos))
+    # Cuando llego por ultima vez (12 meses) a cualquier parte de la empresa, y el
+    # desglose por sucursal con su stock, que se despliega desde "Nacional".
+    recepcion_emp = recepcion_service.por_producto(db, set(productos))
+    desglose = _por_sucursal(db, set(productos))
 
     vistos: dict[str, int] = {}
     salida: list[dict] = []
@@ -353,6 +404,8 @@ def analizar(db: Session, sucursal_id: str, lineas: list[dict]) -> dict:
             else (propia.stock_en_transito_suc if propia else None),
             "transito_nacional": (transito_nac.get(prod) or {}).get("cantidad"),
             "transito_pedido_desde": _iso((transito.get(prod) or {}).get("pedido_desde")),
+            "ult_recepcion_empresa": _iso(recepcion_emp.get(prod)),
+            "por_sucursal": desglose.get(prod, []),
         }
         salida.append(fila)
 

@@ -1042,6 +1042,18 @@ export interface LineaRequerimiento {
   transito_nacional: number | null;
   /** Fecha de la OC más antigua del tránsito ("viene, pero pedido hace 4 meses"). */
   transito_pedido_desde: string | null;
+  /** Última recepción de los últimos 12 meses ("YYYY-MM-DD") en toda la empresa.
+   *  Opcional: una API anterior no la trae. */
+  ult_recepcion_empresa?: string | null;
+  /** Stock y última recepción (12 meses) por sucursal; se despliega desde "Nacional". */
+  por_sucursal?: SucursalStockRecepcion[];
+}
+
+export interface SucursalStockRecepcion {
+  sucursal_id: string;
+  stock: number;
+  /** "DESCONOCIDO" = importaciones que no dicen a qué sucursal llegaron. */
+  ult_recepcion: string | null;
 }
 
 /** Contexto de un repuesto para el vendedor que arma su lista.

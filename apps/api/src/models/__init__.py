@@ -13,6 +13,7 @@ from .bodega_tipo import BodegaTipo
 from .stock_unificado import StockUnificado
 from .reemplazo_ford import ReemplazoFord
 from .stock_transito import StockTransito
+from .ultima_recepcion import UltimaRecepcion
 from .auditoria import AuditoriaLog
 from .notificacion import Notificacion
 from .incidencia import Incidencia
@@ -51,6 +52,7 @@ __all__ = [
     "BodegaTipo",
     "ReemplazoFord",
     "StockTransito",
+    "UltimaRecepcion",
     "AuditoriaLog",
     "Notificacion",
     "Incidencia",

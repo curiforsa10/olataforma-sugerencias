@@ -14,10 +14,12 @@
  *   y separado por proveedor: no se puede mezclar Ford con Gildemeister.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Download,
   Loader2,
@@ -28,7 +30,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { FrecuenciaVenta } from "@/components/frecuencia-venta";
 import { api } from "@/lib/api-client";
-import { formatoCLP, formatoNumero } from "@/lib/formato";
+import { formatoCLP, formatoFecha, formatoNumero } from "@/lib/formato";
 import type { LineaRequerimiento, RequerimientoResponse, Sucursal } from "@/lib/types";
 
 const EJEMPLO = `19 SZ6Z3B437B	4
@@ -60,6 +62,45 @@ function Estado({ linea }: { linea: LineaRequerimiento }) {
   return null;
 }
 
+/**
+ * Stock y última recepción (12 meses) de cada sucursal, desplegado desde "Nacional".
+ * El stock es el mismo que suma "Nacional", así que cuadra con el total.
+ */
+function DesgloseSucursales({ linea }: { linea: LineaRequerimiento }) {
+  const filas = linea.por_sucursal ?? [];
+  return (
+    <table className="w-auto text-[12.5px]">
+      <thead>
+        <tr className="text-left text-[11px] uppercase tracking-wide text-ink-500">
+          <th className="py-1 pr-6">Sucursal</th>
+          <th className="py-1 pr-6 text-right">Stock</th>
+          <th className="py-1">Últ. recepción (12 meses)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filas.map((f) => (
+          <tr key={f.sucursal_id} className="border-t border-ink-100">
+            <td className="py-1 pr-6">
+              {f.sucursal_id === "DESCONOCIDO" ? "Importación (sin sucursal)" : f.sucursal_id}
+            </td>
+            <td className={`tabular py-1 pr-6 text-right ${f.stock ? "" : "text-ink-300"}`}>
+              {formatoNumero(f.stock)}
+            </td>
+            <td className="tabular py-1">{formatoFecha(f.ult_recepcion)}</td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr className="border-t border-ink-200 font-semibold">
+          <td className="py-1 pr-6">Total</td>
+          <td className="tabular py-1 pr-6 text-right">{formatoNumero(linea.stock_nacional ?? 0)}</td>
+          <td className="tabular py-1">{formatoFecha(linea.ult_recepcion_empresa)}</td>
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+
 /** Cada cuanto se mueve. Ver `components/frecuencia-venta.tsx`. */
 function Frecuencia({ linea }: { linea: LineaRequerimiento }) {
   return (
@@ -81,6 +122,8 @@ export default function RequerimientoPage() {
   const [descartados, setDescartados] = useState<string | null>(null);
   // Líneas que el comprador decidió NO comprar (por índice).
   const [excluidas, setExcluidas] = useState<Set<number>>(new Set());
+  // Líneas con el desglose por sucursal abierto (por índice).
+  const [abiertas, setAbiertas] = useState<Set<number>>(new Set());
   // Cantidades editadas en pantalla.
   const [cantidades, setCantidades] = useState<Record<number, number | null>>({});
 
@@ -97,6 +140,7 @@ export default function RequerimientoPage() {
       const r = await api.analizarRequerimiento(sucursal, texto);
       setDatos(r);
       setExcluidas(new Set());
+      setAbiertas(new Set());
       setCantidades({});
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo analizar la lista");
@@ -269,7 +313,7 @@ export default function RequerimientoPage() {
 
           {/* La tabla de decisión */}
           <div className="overflow-x-auto rounded-sm border border-ink-200 bg-white shadow-card">
-            <table className="w-full min-w-[1000px] text-[13px]">
+            <table className="w-full min-w-[1200px] text-[13px]">
               <thead>
                 <tr className="border-b border-ink-200 bg-paper-50 text-left text-[11.5px] uppercase tracking-wide text-ink-500">
                   <th className="w-10 px-3 py-2"></th>
@@ -286,6 +330,12 @@ export default function RequerimientoPage() {
                   <th className="px-3 py-2 text-right">Stock acá</th>
                   <th className="px-3 py-2 text-right">Stock CD</th>
                   <th className="px-3 py-2 text-right">Nacional</th>
+                  <th
+                    className="whitespace-nowrap px-3 py-2"
+                    title="Última vez que llegó a cualquier sucursal o al CD, en los últimos 12 meses (incluye importaciones)"
+                  >
+                    Últ. recepción
+                  </th>
                   <th className="px-3 py-2">Proveedor</th>
                   <th className="px-3 py-2 text-right">Costo</th>
                 </tr>
@@ -293,9 +343,10 @@ export default function RequerimientoPage() {
               <tbody>
                 {lineas.map((l, i) => {
                   const fuera = excluidas.has(i) || l.estado === "no_existe";
+                  const abierta = abiertas.has(i);
                   return (
+                    <Fragment key={`${l.producto}-${i}`}>
                     <tr
-                      key={`${l.producto}-${i}`}
                       className={`border-b border-ink-100 last:border-0 ${
                         fuera ? "bg-ink-50/60 text-ink-400" : "hover:bg-paper-50"
                       }`}
@@ -367,7 +418,31 @@ export default function RequerimientoPage() {
                         {l.stock_cd === null ? "—" : formatoNumero(l.stock_cd)}
                       </td>
                       <td className="tabular px-3 py-2 text-right">
-                        {formatoNumero(l.stock_nacional ?? 0)}
+                        {(l.por_sucursal?.length ?? 0) > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const s = new Set(abiertas);
+                              if (abierta) s.delete(i);
+                              else s.add(i);
+                              setAbiertas(s);
+                            }}
+                            aria-expanded={abierta}
+                            title="Ver el stock y la última recepción de cada sucursal"
+                            className="inline-flex items-center gap-1 rounded-sm px-1 text-accent-700 hover:bg-accent-50 hover:underline"
+                          >
+                            {abierta ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                            {formatoNumero(l.stock_nacional ?? 0)}
+                          </button>
+                        ) : (
+                          formatoNumero(l.stock_nacional ?? 0)
+                        )}
+                      </td>
+                      <td
+                        className="tabular whitespace-nowrap px-3 py-2"
+                        title={l.ult_recepcion_empresa ? undefined : "No llegó a la empresa en los últimos 12 meses"}
+                      >
+                        {formatoFecha(l.ult_recepcion_empresa)}
                       </td>
                       <td className="max-w-[180px] truncate px-3 py-2" title={l.proveedor ?? ""}>
                         {l.proveedor ?? <span className="text-ink-300">—</span>}
@@ -376,6 +451,15 @@ export default function RequerimientoPage() {
                         {l.costo_unitario ? formatoCLP(l.costo_unitario) : "—"}
                       </td>
                     </tr>
+                    {abierta && (
+                      <tr className="border-b border-ink-100 bg-paper-50">
+                        <td />
+                        <td colSpan={11} className="px-3 py-3">
+                          <DesgloseSucursales linea={l} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>
