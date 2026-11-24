@@ -161,6 +161,14 @@ def _miembros_publicados(db: Session, producto: str) -> list[str] | None:
     return None
 
 
+def miembros_publicados(db: Session, producto: str) -> list[str] | None:
+    """El grupo que el MOTOR armo (vigente primero), o None si no publico ninguno.
+
+    Lo que esta aca el motor lo junto: suma su stock y su venta en el sugerido.
+    """
+    return _miembros_publicados(db, producto)
+
+
 def miembros_del_grupo(db: Session, producto: str) -> list[str]:
     """Todos los codigos del grupo de reemplazos de `producto`, vigente primero.
 

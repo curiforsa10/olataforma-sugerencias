@@ -344,3 +344,42 @@ def test_un_codigo_parecido_no_se_cuela(db_session):
     db_session.commit()
 
     assert reemplazo_service.miembros_del_grupo(db_session, "17 200548") == []
+
+
+# --- El total del grupo que armo el motor ----------------------------------------
+
+
+def test_un_grupo_del_mix_suma_todos_sus_codigos_en_el_total(db_session):
+    """El mix no deja ficha en `reemplazo_ford`, pero el motor si junta el grupo.
+
+    `61 FL500S` (vigente) con `19 AA5Z6714A` y `61 LB542`: el sugerido usaba 420 de
+    stock en el CD (137 + 1 + 282) y la tarjeta decia 137, porque dejaba fuera del
+    total a los dos sin ficha de FORD (Abastecimiento, 24-11-2026).
+    """
+    from src.models import Sugerido
+    db_session.add(Sugerido(tenant_id="curifor", producto="61 FL500S",
+                            sucursal_id="CD REPUESTOS",
+                            reemplazos="19 AA5Z6714A, 61 LB542"))
+    db_session.add_all([
+        StockUnificado(tenant_id="curifor", producto="61 FL500S",
+                       sucursal_id="CD REPUESTOS", stock=137),
+        StockUnificado(tenant_id="curifor", producto="19 AA5Z6714A",
+                       sucursal_id="CD REPUESTOS", stock=1),
+        StockUnificado(tenant_id="curifor", producto="61 LB542",
+                       sucursal_id="CD REPUESTOS", stock=282),
+        StockUnificado(tenant_id="curifor", producto="19 AA5Z6714A",
+                       sucursal_id="TALCA", stock=37),
+        VentaHistorica(tenant_id="curifor", periodo="202607",
+                       producto="61 FL500S", cantidad=10),
+        VentaHistorica(tenant_id="curifor", periodo="202607",
+                       producto="61 LB542", cantidad=5),
+    ])
+    db_session.commit()
+
+    for entrada in ("61 FL500S", "61 LB542"):
+        r = sugerido_service.grupo_ventas(db_session, entrada)
+        assert all(m["cuenta_en_el_total"] for m in r["miembros"]), entrada
+        assert all(m["motivo_fuera"] is None for m in r["miembros"]), entrada
+        assert r["total_stock"] == 457
+        assert r["total_stock_por_sucursal"] == {"CD REPUESTOS": 420, "TALCA": 37}
+        assert r["total_venta_12m"] == 15

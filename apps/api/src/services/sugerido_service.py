@@ -2256,7 +2256,15 @@ def grupo_ventas(db: Session, producto: str, sucursal: str | None = None, filtro
     el comprador confiaria en el numero equivocado. Esos codigos se muestran
     igual, pero marcados y FUERA del total.
     """
-    miembros = reemplazo_service.miembros_del_grupo(db, producto)
+    # Un grupo que el motor publico en el sugerido esta junto por definicion: el
+    # motor suma el stock y la venta de todos sus miembros. La ficha de FORD solo
+    # decide en el plan B (grupo armado desde `reemplazo_ford`). Antes se exigia esa
+    # ficha a todos, y los grupos del mix -que no la tienen- mostraban el total del
+    # vigente solo: `61 FL500S` decia 137 en el CD cuando el sugerido usaba 420
+    # (137 + 1 + 282) (Abastecimiento, 24-11-2026).
+    publicados = reemplazo_service.miembros_publicados(db, producto)
+    miembros = publicados or reemplazo_service.miembros_del_grupo(db, producto)
+    del_motor = bool(publicados)
     if len(miembros) < 2:
         # Un solo codigo no es un grupo: la tarjeta no se muestra.
         return {"producto": producto, "miembros": [], "meses": []}
@@ -2305,7 +2313,7 @@ def grupo_ventas(db: Session, producto: str, sucursal: str | None = None, filtro
         f = filas.get(m)
         # `agrupado` vive en la fila del codigo DADO DE BAJA, no en la del
         # vigente: el vigente siempre cuenta.
-        cuenta = m == vigente or bool((f or {}).get("agrupado"))
+        cuenta = del_motor or m == vigente or bool((f or {}).get("agrupado"))
         # Sin fila no se sabe si el motor agrupo o no, y decir que no lo hizo
         # seria inventar. Se deja fuera del total igual -no se puede afirmar que
         # el sugerido los junto- pero el aviso dice la verdad: falta el dato.
