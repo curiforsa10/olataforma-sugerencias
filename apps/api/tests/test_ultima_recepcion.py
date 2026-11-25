@@ -92,9 +92,12 @@ def test_el_requerimiento_trae_la_fecha_global_y_el_desglose(db_session):
     assert "ult_recepcion_sucursal" not in linea
     assert linea["stock_nacional"] == 2
     assert linea["por_sucursal"] == [
-        {"sucursal_id": "CURICO", "stock": 1.5, "ult_recepcion": _dias(32)},
-        {"sucursal_id": "TALCA", "stock": 0.5, "ult_recepcion": None},
-        {"sucursal_id": "CHILLAN", "stock": 0.0, "ult_recepcion": _dias(60)},
+        {"sucursal_id": "CURICO", "stock": 1.5, "stock_reemplazos": 0.0, "stock_por_codigo": {}, "ult_recepcion": _dias(32),
+         "recepcion_por_codigo": {"19 F2GZ19G490A": _dias(32)}},
+        {"sucursal_id": "TALCA", "stock": 0.5, "stock_reemplazos": 0.0, "stock_por_codigo": {}, "ult_recepcion": None,
+         "recepcion_por_codigo": {}},
+        {"sucursal_id": "CHILLAN", "stock": 0.0, "stock_reemplazos": 0.0, "stock_por_codigo": {}, "ult_recepcion": _dias(60),
+         "recepcion_por_codigo": {"19 F2GZ19G490A": _dias(60)}},
     ]
     # El desglose cuadra con "Nacional".
     assert sum(f["stock"] for f in linea["por_sucursal"]) == linea["stock_nacional"]
@@ -111,4 +114,48 @@ def test_la_ruta_del_requerimiento_devuelve_la_fecha_y_el_desglose(client, db_se
     linea = r.json()["lineas"][0]
     assert linea["ult_recepcion_empresa"] == _dias(26)
     assert linea["por_sucursal"] == [{"sucursal_id": "LINDEROS", "stock": 0.0,
-                                      "ult_recepcion": _dias(26)}]
+                                      "stock_reemplazos": 0.0, "stock_por_codigo": {}, "ult_recepcion": _dias(26),
+                                      "recepcion_por_codigo": {"61 FL500S": _dias(26)}}]
+
+
+def test_el_desglose_trae_el_stock_de_los_reemplazos_y_la_recepcion_del_grupo(db_session):
+    """`61 FL500S` con `19 AA5Z6714A` y `61 LB542`: se pidio ver el stock de los
+    reemplazos al lado (Abastecimiento, 24-11-2026). La fecha es la del grupo: el
+    repuesto es el mismo aunque haya llegado con otro codigo."""
+    db_session.add(Sugerido(tenant_id="curifor", producto="61 FL500S", sucursal_id="CD REPUESTOS",
+                            reemplazos="19 AA5Z6714A, 61 LB542"))
+    db_session.add_all([
+        StockUnificado(tenant_id="curifor", producto="61 FL500S", bodega="B1",
+                       sucursal_id="CD REPUESTOS", stock=137),
+        StockUnificado(tenant_id="curifor", producto="61 LB542", bodega="B1",
+                       sucursal_id="CD REPUESTOS", stock=282),
+        StockUnificado(tenant_id="curifor", producto="19 AA5Z6714A", bodega="B1",
+                       sucursal_id="CD REPUESTOS", stock=1),
+        StockUnificado(tenant_id="curifor", producto="19 AA5Z6714A", bodega="B1",
+                       sucursal_id="TALCA", stock=37),
+    ])
+    db_session.commit()
+    recepcion_service.reemplazar(db_session, [
+        {"producto": "61 FL500S", "sucursal_id": "CD REPUESTOS", "fecha": _dias(20)},
+        {"producto": "61 LB542", "sucursal_id": "CD REPUESTOS", "fecha": _dias(5)},
+        {"producto": "19 AA5Z6714A", "sucursal_id": "TALCA", "fecha": _dias(9)},
+    ])
+
+    r = requerimiento_service.analizar(db_session, "LINDEROS",
+                                       [{"producto": "61 FL500S", "cantidad": 4}])
+    linea = r["lineas"][0]
+
+    assert linea["stock_nacional"] == 137   # "Nacional" sigue siendo solo este codigo
+    assert linea["ult_recepcion_empresa"] == _dias(5)
+    assert linea["por_sucursal"] == [
+        {"sucursal_id": "CD REPUESTOS", "stock": 137.0, "stock_reemplazos": 283.0,
+         "stock_por_codigo": {"61 LB542": 282.0, "19 AA5Z6714A": 1.0},
+         "ult_recepcion": _dias(5),
+         "recepcion_por_codigo": {"61 FL500S": _dias(20), "61 LB542": _dias(5)}},
+        {"sucursal_id": "TALCA", "stock": 0.0, "stock_reemplazos": 37.0,
+         "stock_por_codigo": {"19 AA5Z6714A": 37.0},
+         "ult_recepcion": _dias(9),
+         "recepcion_por_codigo": {"19 AA5Z6714A": _dias(9)}},
+    ]
+    # Una columna por codigo de reemplazo en el desglose (Abastecimiento, 25-11-2026).
+    assert sorted(linea["codigos_reemplazo"]) == ["19 AA5Z6714A", "61 LB542"]

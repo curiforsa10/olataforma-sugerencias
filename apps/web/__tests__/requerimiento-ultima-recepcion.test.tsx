@@ -19,9 +19,10 @@ vi.mock("next/link", () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
 }));
 
-const linea = (producto: string, emp: string | null, por_sucursal: unknown[], nacional = 2) => ({
+const linea = (producto: string, emp: string | null, por_sucursal: unknown[], nacional = 2,
+               reemplazos: string | null = null) => ({
   producto, texto_original: producto, cantidad: 1, estado: "sin_venta_local", duplicado: false,
-  descripcion: "REPUESTO", proveedor: "FORD", costo_unitario: 1000, reemplazos: null,
+  descripcion: "REPUESTO", proveedor: "FORD", costo_unitario: 1000, reemplazos,
   nombre_sucursal: "Linderos", stock_sucursal: 0, stock_nacional: nacional, meses_con_venta_3m: null,
   meses_con_venta_6m: null, meses_con_venta_12m: null, venta_mensual: null, venta_12m: null,
   clasificacion_abc: null, stock_cd: null, total_sugerido_suc: null, frecuencia_otra_sucursal: null,
@@ -92,5 +93,47 @@ describe("Requerimiento: última recepción", () => {
   it("sin desglose, Nacional es solo el número", async () => {
     await analizar([linea("19 X", null, [], 0)]);
     expect(screen.queryByRole("button", { expanded: false })).not.toBeInTheDocument();
+  });
+
+  it("con reemplazos, cada código con su stock y su última recepción, y el total del grupo",
+     async () => {
+    await analizar([{
+      ...linea("61 FL500S", "2026-11-19", [
+        { sucursal_id: "CD REPUESTOS", stock: 137, stock_reemplazos: 283,
+          stock_por_codigo: { "61 LB542": 282, "19 AA5Z6714A": 1 }, ult_recepcion: "2026-11-19",
+          recepcion_por_codigo: { "61 FL500S": "2026-11-01", "61 LB542": "2026-11-19" } },
+        { sucursal_id: "TALCA", stock: 0, stock_reemplazos: 37,
+          stock_por_codigo: { "19 AA5Z6714A": 37 }, ult_recepcion: "2026-11-15",
+          recepcion_por_codigo: { "19 AA5Z6714A": "2026-11-15" } },
+      ], 137, "19 AA5Z6714A, 61 LB542"),
+      codigos_reemplazo: ["19 AA5Z6714A", "61 LB542"],
+    }]);
+    fireEvent.click(screen.getByRole("button", { name: /137/, expanded: false }));
+
+    const tablas = screen.getAllByRole("table");
+    const desglose = tablas[tablas.length - 1];
+    const cab = within(desglose).getAllByRole("columnheader").map((c) => c.textContent);
+    const fecha = "Últ. recepción (12 meses)";
+    expect(cab).toEqual(["Sucursal", "61 FL500S", "19 AA5Z6714A", "61 LB542", "Total stock",
+                         "Stock", fecha, "Stock", fecha, "Stock", fecha]);
+    const filas = within(desglose).getAllByRole("row").slice(2).map((f) =>
+      within(f).queryAllByRole("cell").map((c) => c.textContent));
+    expect(filas).toEqual([
+      ["CD REPUESTOS", "137", "01-11-2026", "1", "—", "282", "19-11-2026", "420"],
+      ["TALCA", "0", "—", "37", "15-11-2026", "0", "—", "37"],
+      ["Total", "137", "01-11-2026", "38", "15-11-2026", "282", "19-11-2026", "457"],
+    ]);
+  });
+
+  it("con una API anterior (sin stock por código), los reemplazos van sumados", async () => {
+    await analizar([
+      linea("61 FL500S", "2026-11-19", [
+        { sucursal_id: "CD REPUESTOS", stock: 137, stock_reemplazos: 283, ult_recepcion: "2026-11-19" },
+      ], 137, "19 AA5Z6714A, 61 LB542"),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: /137/, expanded: false }));
+    const tablas = screen.getAllByRole("table");
+    const cab = within(tablas[tablas.length - 1]).getAllByRole("columnheader").map((c) => c.textContent);
+    expect(cab).toEqual(["Sucursal", "61 FL500S", "Reemplazos", "Total", "Últ. recepción (12 meses)"]);
   });
 });

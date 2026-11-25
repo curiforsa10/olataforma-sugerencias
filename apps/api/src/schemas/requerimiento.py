@@ -36,6 +36,13 @@ class FrecuenciaOtraSucursal(BaseModel):
 class SucursalStockRecepcion(BaseModel):
     sucursal_id: str
     stock: float = 0
+    # Stock de los otros codigos del grupo de reemplazos en esa sucursal.
+    stock_reemplazos: float = 0
+    # El mismo stock separado por codigo de reemplazo ({codigo: stock}, sin ceros).
+    stock_por_codigo: dict[str, float] = {}
+    # Ultima recepcion (12 meses) de cada codigo del grupo en esa sucursal, el pedido
+    # incluido ({codigo: "YYYY-MM-DD"}; un codigo sin recepcion no aparece).
+    recepcion_por_codigo: dict[str, str] = {}
     # Ultima recepcion de los ultimos 12 meses en esa sucursal ("YYYY-MM-DD").
     # "DESCONOCIDO" son importaciones que no dicen a que sucursal llegaron.
     ult_recepcion: str | None = None
@@ -73,11 +80,14 @@ class LineaRequerimiento(BaseModel):
     transito_sucursal: float | None = None
     transito_nacional: float | None = None
     transito_pedido_desde: str | None = None
-    # Ultima recepcion de los ultimos 12 meses ("YYYY-MM-DD") en toda la empresa.
+    # Ultima recepcion de los ultimos 12 meses ("YYYY-MM-DD") en toda la empresa,
+    # de cualquier codigo del grupo de reemplazos.
     # `None` = no llego en 12 meses (o el motor no la publico).
     ult_recepcion_empresa: str | None = None
     # Stock y ultima recepcion por sucursal (se despliega desde "Nacional").
     por_sucursal: list[SucursalStockRecepcion] = []
+    # Los otros codigos del grupo de reemplazos (una columna por codigo en el desglose).
+    codigos_reemplazo: list[str] = []
 
 
 class ResumenRequerimiento(BaseModel):

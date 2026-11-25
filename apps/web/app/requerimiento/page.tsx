@@ -31,7 +31,12 @@ import { Button } from "@/components/ui/button";
 import { FrecuenciaVenta } from "@/components/frecuencia-venta";
 import { api } from "@/lib/api-client";
 import { formatoCLP, formatoFecha, formatoNumero } from "@/lib/formato";
-import type { LineaRequerimiento, RequerimientoResponse, Sucursal } from "@/lib/types";
+import type {
+  LineaRequerimiento,
+  RequerimientoResponse,
+  Sucursal,
+  SucursalStockRecepcion,
+} from "@/lib/types";
 
 const EJEMPLO = `19 SZ6Z3B437B	4
 70 2723982	2
@@ -62,39 +67,165 @@ function Estado({ linea }: { linea: LineaRequerimiento }) {
   return null;
 }
 
+const nombreSucursal = (s: string) => (s === "DESCONOCIDO" ? "Importación (sin sucursal)" : s);
+const gris = (v: number) => (v ? "" : "text-ink-300");
+const masReciente = (fechas: (string | null | undefined)[]) =>
+  fechas.reduce<string | null>((a, f) => (f && (!a || f > a) ? f : a), null);
+
 /**
  * Stock y última recepción (12 meses) de cada sucursal, desplegado desde "Nacional".
- * El stock es el mismo que suma "Nacional", así que cuadra con el total.
+ * El stock del código pedido es el mismo que suma "Nacional", así que cuadra con el
+ * total. Si tiene reemplazos, cada código del grupo lleva su stock y su última
+ * recepción, y al final el stock total del grupo (Abastecimiento, 25-11-2026).
  */
 function DesgloseSucursales({ linea }: { linea: LineaRequerimiento }) {
   const filas = linea.por_sucursal ?? [];
+  // Los reemplazos: los que manda la API, más cualquiera con stock o fecha que falte.
+  const reemplazos = [...(linea.codigos_reemplazo ?? [])];
+  for (const f of filas) {
+    const enFila = [...Object.keys(f.stock_por_codigo ?? {}), ...Object.keys(f.recepcion_por_codigo ?? {})];
+    for (const c of enFila) {
+      if (c !== linea.producto && !reemplazos.includes(c)) reemplazos.push(c);
+    }
+  }
+  if (reemplazos.length > 0) return <DesglosePorCodigo linea={linea} reemplazos={reemplazos} />;
+
+  // Sin reemplazos, o una API anterior que solo trae el stock de los reemplazos sumado.
+  const sumado = !!linea.reemplazos || filas.some((f) => (f.stock_reemplazos ?? 0) > 0);
+  const totalReemplazos = filas.reduce((a, f) => a + (f.stock_reemplazos ?? 0), 0);
+  const th = "py-1 pr-6 text-right";
   return (
     <table className="w-auto text-[12.5px]">
       <thead>
         <tr className="text-left text-[11px] uppercase tracking-wide text-ink-500">
           <th className="py-1 pr-6">Sucursal</th>
-          <th className="py-1 pr-6 text-right">Stock</th>
+          <th className={th}>{sumado ? linea.producto : "Stock"}</th>
+          {sumado && (
+            <>
+              <th className={th} title={linea.reemplazos ? `Reemplazos: ${linea.reemplazos}` : undefined}>
+                Reemplazos
+              </th>
+              <th className={th}>Total</th>
+            </>
+          )}
           <th className="py-1">Últ. recepción (12 meses)</th>
         </tr>
       </thead>
       <tbody>
-        {filas.map((f) => (
-          <tr key={f.sucursal_id} className="border-t border-ink-100">
-            <td className="py-1 pr-6">
-              {f.sucursal_id === "DESCONOCIDO" ? "Importación (sin sucursal)" : f.sucursal_id}
-            </td>
-            <td className={`tabular py-1 pr-6 text-right ${f.stock ? "" : "text-ink-300"}`}>
-              {formatoNumero(f.stock)}
-            </td>
-            <td className="tabular py-1">{formatoFecha(f.ult_recepcion)}</td>
-          </tr>
-        ))}
+        {filas.map((f) => {
+          const r = f.stock_reemplazos ?? 0;
+          return (
+            <tr key={f.sucursal_id} className="border-t border-ink-100">
+              <td className="py-1 pr-6">{nombreSucursal(f.sucursal_id)}</td>
+              <td className={`tabular py-1 pr-6 text-right ${gris(f.stock)}`}>{formatoNumero(f.stock)}</td>
+              {sumado && (
+                <>
+                  <td className={`tabular py-1 pr-6 text-right ${gris(r)}`}>{formatoNumero(r)}</td>
+                  <td className={`tabular py-1 pr-6 text-right font-medium ${gris(f.stock + r)}`}>
+                    {formatoNumero(f.stock + r)}
+                  </td>
+                </>
+              )}
+              <td className="tabular py-1">{formatoFecha(f.ult_recepcion)}</td>
+            </tr>
+          );
+        })}
       </tbody>
       <tfoot>
         <tr className="border-t border-ink-200 font-semibold">
           <td className="py-1 pr-6">Total</td>
           <td className="tabular py-1 pr-6 text-right">{formatoNumero(linea.stock_nacional ?? 0)}</td>
+          {sumado && (
+            <>
+              <td className="tabular py-1 pr-6 text-right">{formatoNumero(totalReemplazos)}</td>
+              <td className="tabular py-1 pr-6 text-right">
+                {formatoNumero((linea.stock_nacional ?? 0) + totalReemplazos)}
+              </td>
+            </>
+          )}
           <td className="tabular py-1">{formatoFecha(linea.ult_recepcion_empresa)}</td>
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+
+/** Cada código del grupo con su stock y su última recepción, sucursal por sucursal. */
+function DesglosePorCodigo({ linea, reemplazos }: { linea: LineaRequerimiento; reemplazos: string[] }) {
+  const filas = linea.por_sucursal ?? [];
+  const codigos = [linea.producto, ...reemplazos];
+  const pedido = (c: string) => c === linea.producto;
+  const stock = (f: SucursalStockRecepcion, c: string) =>
+    pedido(c) ? f.stock : (f.stock_por_codigo?.[c] ?? 0);
+  const fecha = (f: SucursalStockRecepcion, c: string) => f.recepcion_por_codigo?.[c] ?? null;
+  const totalStock = (c: string) =>
+    pedido(c) ? (linea.stock_nacional ?? 0) : filas.reduce((a, f) => a + stock(f, c), 0);
+  const totalGrupo = codigos.reduce((a, c) => a + totalStock(c), 0);
+  const borde = "border-l border-ink-100 pl-3";
+  const rotulo = "text-[11px] uppercase tracking-wide text-ink-500";
+  return (
+    <table className="w-auto text-[12.5px]">
+      <thead>
+        <tr className="text-[12px] text-ink-700">
+          <th rowSpan={2} className={`py-1 pr-6 text-left align-bottom ${rotulo}`}>
+            Sucursal
+          </th>
+          {codigos.map((c) => (
+            <th
+              key={c}
+              colSpan={2}
+              className={`${borde} py-1 pr-3 text-center font-mono font-semibold`}
+              title={pedido(c) ? "Código pedido" : "Reemplazo"}
+            >
+              {c}
+            </th>
+          ))}
+          <th rowSpan={2} className={`${borde} py-1 text-right align-bottom ${rotulo}`}>
+            Total stock
+          </th>
+        </tr>
+        <tr className={rotulo}>
+          {codigos.map((c) => (
+            <Fragment key={c}>
+              <th className={`${borde} py-1 pr-4 text-right`}>Stock</th>
+              <th className="py-1 pr-3 text-right">Últ. recepción (12 meses)</th>
+            </Fragment>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {filas.map((f) => {
+          const total = codigos.reduce((a, c) => a + stock(f, c), 0);
+          return (
+            <tr key={f.sucursal_id} className="border-t border-ink-100">
+              <td className="py-1 pr-6">{nombreSucursal(f.sucursal_id)}</td>
+              {codigos.map((c) => (
+                <Fragment key={c}>
+                  <td className={`${borde} tabular py-1 pr-4 text-right ${gris(stock(f, c))}`}>
+                    {formatoNumero(stock(f, c))}
+                  </td>
+                  <td className="tabular py-1 pr-3 text-right">{formatoFecha(fecha(f, c))}</td>
+                </Fragment>
+              ))}
+              <td className={`${borde} tabular py-1 text-right font-medium ${gris(total)}`}>
+                {formatoNumero(total)}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+      <tfoot>
+        <tr className="border-t border-ink-200 font-semibold">
+          <td className="py-1 pr-6">Total</td>
+          {codigos.map((c) => (
+            <Fragment key={c}>
+              <td className={`${borde} tabular py-1 pr-4 text-right`}>{formatoNumero(totalStock(c))}</td>
+              <td className="tabular py-1 pr-3 text-right">
+                {formatoFecha(masReciente(filas.map((f) => fecha(f, c))))}
+              </td>
+            </Fragment>
+          ))}
+          <td className={`${borde} tabular py-1 text-right`}>{formatoNumero(totalGrupo)}</td>
         </tr>
       </tfoot>
     </table>

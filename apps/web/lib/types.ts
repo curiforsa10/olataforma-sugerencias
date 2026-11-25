@@ -1047,11 +1047,19 @@ export interface LineaRequerimiento {
   ult_recepcion_empresa?: string | null;
   /** Stock y última recepción (12 meses) por sucursal; se despliega desde "Nacional". */
   por_sucursal?: SucursalStockRecepcion[];
+  /** Los otros códigos del grupo de reemplazos: una columna por código en el desglose. */
+  codigos_reemplazo?: string[];
 }
 
 export interface SucursalStockRecepcion {
   sucursal_id: string;
   stock: number;
+  /** Stock de los otros códigos del grupo de reemplazos. Opcional: API anterior. */
+  stock_reemplazos?: number;
+  /** El mismo stock separado por código de reemplazo ({código: stock}). */
+  stock_por_codigo?: Record<string, number>;
+  /** Última recepción (12 meses) de cada código del grupo, el pedido incluido. */
+  recepcion_por_codigo?: Record<string, string>;
   /** "DESCONOCIDO" = importaciones que no dicen a qué sucursal llegaron. */
   ult_recepcion: string | null;
 }

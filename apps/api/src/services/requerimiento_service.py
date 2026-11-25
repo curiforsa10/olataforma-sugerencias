@@ -213,42 +213,86 @@ def _stock_nacional(db: Session, productos: set[str]) -> dict[str, float]:
         return {}
 
 
-def _por_sucursal(db: Session, productos: set[str]) -> dict[str, list[dict]]:
+def _reemplazos_de(db: Session, productos: set[str]) -> dict[str, list[str]]:
+    """{producto: los OTROS codigos de su grupo de reemplazos} (vacio si no tiene).
+
+    Es el mismo grupo que muestra la ficha: el que armo el motor, o el de FORD si
+    el motor no publico ninguno.
+    """
+    salida = {}
+    for p in productos:
+        try:
+            miembros = reemplazo_service.miembros_del_grupo(db, p)
+        except Exception:  # noqa: BLE001 - sin tabla de reemplazos no hay grupo
+            db.rollback()
+            miembros = []
+        salida[p] = [m for m in miembros if m != p]
+    return salida
+
+
+def _por_sucursal(
+    db: Session, productos: set[str], reemplazos: dict[str, list[str]] | None = None
+) -> dict[str, list[dict]]:
     """Stock y ultima recepcion (12 meses) de cada producto, sucursal por sucursal.
 
     Abastecimiento (24-11-2026): desde la columna "Nacional" del requerimiento,
-    ver donde esta el stock y cuando llego por ultima vez a cada sucursal. El stock
+    ver donde esta el stock y cuando llego por ultima vez a cada sucursal. `stock`
     es el mismo que suma "Nacional" (todas las bodegas, sumadas por sucursal), para
-    que el desglose cuadre con el total. Aparece toda sucursal con stock o con una
+    que cuadre con el total; `stock_reemplazos` es el de los otros codigos del grupo
+    de reemplazos, que se pidio ver al lado, y `stock_por_codigo` lo separa por
+    codigo (Abastecimiento, 25-11-2026: saber cual pedir o trasladar), igual que
+    `recepcion_por_codigo` con la ultima recepcion de cada codigo, el pedido incluido. La ultima recepcion es la del grupo
+    completo: el repuesto es el mismo aunque haya llegado con otro codigo.
+    Aparece toda sucursal con stock (del codigo o de un reemplazo) o con una
     recepcion en 12 meses; las importaciones que no dicen sucursal van aparte.
     """
     if not productos:
         return {}
+    reemplazos = reemplazos or {}
+    todos = set(productos).union(*reemplazos.values()) if reemplazos else set(productos)
     stock: dict[str, dict[str | None, float]] = {}
     try:
         for p, s, c in db.execute(
             select(StockUnificado.producto, StockUnificado.sucursal_id,
                    func.sum(StockUnificado.stock))
-            .where(StockUnificado.producto.in_(productos))
+            .where(StockUnificado.producto.in_(todos))
             .group_by(StockUnificado.producto, StockUnificado.sucursal_id)
         ).all():
             stock.setdefault(p, {})[s] = float(c or 0)
     except Exception:  # noqa: BLE001 - tabla ausente en un deploy nuevo
         db.rollback()
-    recep = recepcion_service.por_producto_y_sucursal(db, productos)
+    recep = recepcion_service.por_producto_y_sucursal(db, todos)
 
     salida: dict[str, list[dict]] = {}
     for p in productos:
-        st, rc = stock.get(p, {}), recep.get(p, {})
+        otros = reemplazos.get(p, [])
+        st = stock.get(p, {})
+        st_r: dict[str | None, float] = {}
+        por_cod: dict[str | None, dict[str, float]] = {}
+        rc: dict[str | None, object] = {}
+        for m in otros:
+            for s, c in stock.get(m, {}).items():
+                st_r[s] = st_r.get(s, 0.0) + c
+                if c:
+                    por_cod.setdefault(s, {})[m] = c
+        rc_cod: dict[str | None, dict[str, object]] = {}
+        for m in [p, *otros]:
+            for s, d in recep.get(m, {}).items():
+                if s not in rc or d > rc[s]:
+                    rc[s] = d
+                rc_cod.setdefault(s, {})[m] = d
         filas = []
-        for s in set(st) | set(rc):
-            cant = st.get(s, 0.0)
-            if cant == 0 and s not in rc:
+        for s in set(st) | set(st_r) | set(rc):
+            cant, cant_r = st.get(s, 0.0), st_r.get(s, 0.0)
+            if cant == 0 and cant_r == 0 and s not in rc:
                 continue
             filas.append({"sucursal_id": s or "SIN SUCURSAL", "stock": cant,
-                          "ult_recepcion": _iso(rc.get(s))})
-        # Mas stock primero; a igual stock, la que recibio mas reciente.
-        filas.sort(key=lambda f: (-f["stock"], -(int((f["ult_recepcion"] or "0").replace("-", ""))),
+                          "stock_reemplazos": cant_r, "stock_por_codigo": por_cod.get(s, {}),
+                          "ult_recepcion": _iso(rc.get(s)),
+                          "recepcion_por_codigo": {m: _iso(d) for m, d in rc_cod.get(s, {}).items()}})
+        # Mas stock (del grupo) primero; a igual stock, la que recibio mas reciente.
+        filas.sort(key=lambda f: (-(f["stock"] + f["stock_reemplazos"]),
+                                  -(int((f["ult_recepcion"] or "0").replace("-", ""))),
                                   f["sucursal_id"]))
         salida[p] = filas
     return salida
@@ -348,8 +392,16 @@ def analizar(db: Session, sucursal_id: str, lineas: list[dict]) -> dict:
     transito_nac = transito_service.por_producto(db, set(productos))
     # Cuando llego por ultima vez (12 meses) a cualquier parte de la empresa, y el
     # desglose por sucursal con su stock, que se despliega desde "Nacional".
-    recepcion_emp = recepcion_service.por_producto(db, set(productos))
-    desglose = _por_sucursal(db, set(productos))
+    reemplazos_de = _reemplazos_de(db, set(productos))
+    desglose = _por_sucursal(db, set(productos), reemplazos_de)
+    # La fecha de la empresa es la del grupo de reemplazos completo.
+    todos = set(productos).union(*reemplazos_de.values()) if reemplazos_de else set(productos)
+    recepcion_todos = recepcion_service.por_producto(db, todos)
+    recepcion_emp = {
+        p: max((recepcion_todos[m] for m in [p, *reemplazos_de.get(p, [])] if m in recepcion_todos),
+               default=None)
+        for p in set(productos)
+    }
 
     vistos: dict[str, int] = {}
     salida: list[dict] = []
@@ -406,6 +458,8 @@ def analizar(db: Session, sucursal_id: str, lineas: list[dict]) -> dict:
             "transito_pedido_desde": _iso((transito.get(prod) or {}).get("pedido_desde")),
             "ult_recepcion_empresa": _iso(recepcion_emp.get(prod)),
             "por_sucursal": desglose.get(prod, []),
+            # Los otros codigos del grupo, en orden: una columna por codigo en el desglose.
+            "codigos_reemplazo": reemplazos_de.get(prod, []),
         }
         salida.append(fila)
 
