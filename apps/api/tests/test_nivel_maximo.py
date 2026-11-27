@@ -215,6 +215,36 @@ def test_no_toca_la_cadena_de_productos_que_no_cambiaron():
     assert fila["sugerido_compra_neto"] == 99.0
 
 
+def test_ml_full_nunca_compra_aunque_sea_clase_a():
+    """ML-FULL la abastece solo el CD, que compra por ella: la regla no le escribe
+    sugerido propio aunque este bajo su maximo (Abastecimiento, 27-11-2026)."""
+    fila = _fila(sucursal_id="BODEGA ML-FULL", abastece_cd="Si", stock_activo_suc=0.0)
+    resumen = nivel_maximo.aplicar([fila], CONFIG)
+    assert fila["total_sugerido_suc"] == 0.0
+    assert resumen["filas_nuevas"] == 0
+    # El nivel maximo se informa igual.
+    assert fila["nivel_maximo"] == 2
+
+
+def test_rehacer_la_cadena_no_borra_el_traslado_de_una_fila_que_no_compra():
+    """El CD sube por la regla y se rehace la cadena del producto. La fila clase D
+    (o ML-FULL) tiene sugerido 0 y su necesidad viene como traslado del motor: antes
+    quedaba en blanco y la sucursal se quedaba sin su traslado."""
+    cd = _fila(sucursal_id="CD REPUESTOS", clasificacion_abc_agregada="A", stock_activo_suc=0.0,
+               abastece_cd="No")
+    d = _fila(sucursal_id="PLACILLA", clasificacion_abc="D", abastece_cd="Si", stock_en_cd=10.0,
+              prioridad_cd=4, sugerido_suc=0.0, sugerido_traslado=3.0, demanda_diaria=0.01)
+    ml = _fila(sucursal_id="BODEGA ML-FULL", abastece_cd="Si", stock_en_cd=10.0, prioridad_cd=99,
+               sugerido_suc=0.0, sugerido_traslado=9.0, stock_activo_suc=0.0)
+    nivel_maximo.aplicar([cd, d, ml], CONFIG)
+    assert cd["total_sugerido_suc"] > 0          # el CD si subio
+    assert d["sugerido_traslado"] == 3.0         # se mantiene
+    assert d["sugerido_compra_neto"] is None     # no compra
+    assert ml["sugerido_traslado"] == 7.0        # lo que queda del CD (10 - 3)
+    assert ml["total_sugerido_suc"] == 0.0
+    assert ml["comprar_en_el_cd"] == "Si"        # 3 + 9 > 10
+
+
 # --- De punta a punta: archivo cargado -> fila en la grilla -----------------------
 
 def test_la_carga_aplica_la_regla_y_la_fila_queda_pidiendo(client):

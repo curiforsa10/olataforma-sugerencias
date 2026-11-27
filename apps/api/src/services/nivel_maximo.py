@@ -51,6 +51,9 @@ from typing import Any
 
 CD = "CD REPUESTOS"
 CLASES_ROTACION = {"A", "B"}
+# Sucursales que nunca compran: las abastece solo el CD, que compra por ellas.
+# Espejo de `parametros.SUCURSALES_SOLO_CD` del motor (Abastecimiento, 27-11-2026).
+SUCURSALES_SOLO_CD = {"BODEGA ML-FULL"}
 
 
 def _num(v: Any) -> float:
@@ -95,6 +98,10 @@ def _aplica_a(fila: dict, clases: str) -> bool:
     Al 07-08-2026 eran 1.444 filas y $58,4 millones de compra duplicada, con el
     stock ya existiendo en la red (decision de Ignacio Calderon, 07-08-2026).
     """
+    # ML-FULL no compra nunca: si la regla le escribiera sugerido, se compraria dos
+    # veces lo que el CD ya compra por ella.
+    if str(fila.get("sucursal_id") or "").strip().upper() in SUCURSALES_SOLO_CD:
+        return False
     if clases == "ABCD":
         return True
     clase = _clase_agregada(fila) if _es_cd(fila) else _clase(fila)
@@ -154,13 +161,19 @@ def _recalcular_cadena_cd(filas: list[dict]) -> None:
     stock_cd = max((_num(f.get("stock_en_cd")) for f in con_cd), default=0.0)
     acumulado = 0.0
     for f in con_cd:
-        mio = _num(f.get("sugerido_suc"))
+        sugerido = _num(f.get("sugerido_suc"))
+        # Una fila que no compra (clase D, ML-FULL) tiene sugerido 0 y su necesidad
+        # solo llega como el traslado que calculo el motor. Contar solo el sugerido
+        # le borraba ese traslado cada vez que otra fila del producto cambiaba: al
+        # 27-11-2026 eran 20 de los 73 traslados del dia.
+        mio = max(sugerido, _num(f.get("sugerido_traslado")))
         # Disponible = lo que queda del CD despues de las sucursales que van antes.
         disponible = max(stock_cd - acumulado, 0.0)
         traslado = min(mio, disponible) if mio > 0 and stock_cd > 0 else 0.0
         acumulado += mio
         f["sugerido_traslado"] = float(int(traslado)) if traslado > 0 else None
-        f["sugerido_compra_neto"] = mio - float(int(traslado))
+        # Igual que el motor: compra neta solo si la fila compra.
+        f["sugerido_compra_neto"] = sugerido - float(int(traslado)) if sugerido > 0 else None
         # El CD tiene que reponerse cuando la demanda acumulada hasta esta
         # sucursal (inclusive) supera lo que tiene en bodega.
         f["comprar_en_el_cd"] = "Si" if stock_cd <= 0 or acumulado > stock_cd else "No"
